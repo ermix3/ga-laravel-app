@@ -54,6 +54,9 @@ jobs:
       - name: Check and install Docker on remote server
         run: |
           ssh -o StrictHostKeyChecking=no root@${{ secrets.SERVER_IP }} << EOF
+
+            export NETWORK_NAME=${{ env.NETWORK_NAME }}
+
             # Check if Docker is installed
             if ! command -v docker &> /dev/null; then
               echo "Docker not found. Installing Docker..."
@@ -88,8 +91,19 @@ jobs:
               echo "Docker Compose is already installed."
             fi
 
-            # Create backend directory if it doesn't exist
+            echo "Create backend directory if it doesn't exist"
             mkdir -p /backend
+
+            echo "Ensuring Docker network exists..."
+            if ! docker network inspect "$NETWORK_NAME" >/dev/null 2>&1; then
+              echo "Creating Docker network: $NETWORK_NAME"
+              docker network create "$NETWORK_NAME"
+            else
+              echo "Network $NETWORK_NAME already exists."
+            fi
+
+            echo "Remove unused images to free disk space"
+            docker image prune -af
           EOF
 
       - name: Copy docker compose and config to server
@@ -180,22 +194,10 @@ jobs:
             export DB_PASSWORD=${{ secrets.DB_PASSWORD }}
             export DB_DATABASE=${{ env.DB_DATABASE }}
             export DB_USERNAME=${{ env.DB_USERNAME }}
-            export NETWORK_NAME=${{ env.NETWORK_NAME }}
             export DB_ROOT_PASSWORD=${{ secrets.DB_ROOT_PASSWORD }}
 
             echo "Pull the latest image"
             docker pull ${{ env.REGISTRY }}/${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
-
-            echo "Ensuring network exists..."
-            docker network inspect \$NETWORK_NAME >/dev/null 2>&1 || docker network create \$NETWORK_NAME
-
-            echo "Ensuring Docker network exists..."
-            if ! docker network inspect "$NETWORK_NAME" >/dev/null 2>&1; then
-              echo "Creating Docker network: $NETWORK_NAME"
-              docker network create "$NETWORK_NAME"
-            else
-              echo "Network $NETWORK_NAME already exists."
-            fi
 
             echo "Run with the appropriate docker compose command"
             if command -v docker compose &> /dev/null; then
@@ -205,9 +207,6 @@ jobs:
               docker-compose -f docker-compose.prod.yml down
               docker-compose -f docker-compose.prod.yml up -d
             fi
-
-            echo "Remove unused images to free disk space"
-            docker image prune -af
 
             echo "Run migrations after a short delay to ensure services are up"
             sleep 10
