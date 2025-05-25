@@ -50,7 +50,7 @@ services:
 
 networks:
   fullstack-network:
-    driver: external
+    external: true
 
 volumes:
   db_data:

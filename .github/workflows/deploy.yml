@@ -94,7 +94,7 @@ jobs:
             echo "Create backend directory if it doesn't exist"
             mkdir -p /backend
 
-            echo "Ensuring Docker network exists..."
+            # Ensuring Docker network exists...
             if ! docker network inspect "$NETWORK_NAME" >/dev/null 2>&1; then
               echo "Creating Docker network: $NETWORK_NAME"
               docker network create "$NETWORK_NAME"
