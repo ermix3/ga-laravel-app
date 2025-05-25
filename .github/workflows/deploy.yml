@@ -97,7 +97,7 @@ jobs:
         run: |
           ssh -o StrictHostKeyChecking=no root@${{ secrets.SERVER_IP }} << EOF
             cat > /backend/.env << 'END'
-            APP_NAME=Laravel
+            APP_NAME=${{ secrets.APP_NAME }}
             APP_ENV=production
             APP_DEBUG=false
             APP_URL=https://api.yourdomain.com
@@ -132,6 +132,12 @@ jobs:
           ssh -o StrictHostKeyChecking=no root@${{ secrets.SERVER_IP }} << EOF
             cd /backend
 
+            export DOCKER_HUB_USERNAME=${{ secrets.DOCKER_HUB_USERNAME }}
+            export APP_NAME=${{ secrets.APP_NAME }}
+            export APP_KEY=${{ secrets.APP_KEY }}
+            export DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+            export DB_ROOT_PASSWORD=${{ secrets.DB_ROOT_PASSWORD }}
+
             # Pull the latest image
             docker pull ${{ env.REGISTRY }}/${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
 
@@ -143,6 +149,9 @@ jobs:
               docker-compose -f docker-compose.prod.yml down
               docker-compose -f docker-compose.prod.yml up -d
             fi
+
+            # Optional: Remove dangling/unused images to free disk space
+            docker image prune -af
 
             # Run migrations after a short delay to ensure services are up
             sleep 10
