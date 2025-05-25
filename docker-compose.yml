@@ -1,0 +1,54 @@
+services:
+    backend:
+        image: ${DOCKER_USERNAME}/laravel-backend:latest
+        container_name: ${APP_NAME}_backend
+        restart: unless-stopped
+        environment:
+            - DB_HOST=db
+            - DB_DATABASE=laravel
+            - DB_USERNAME=laravel
+            - DB_PASSWORD=${DB_PASSWORD}
+            - APP_ENV=production
+            - APP_KEY=${APP_KEY}
+            - APP_URL=http://136.244.91.127
+        depends_on:
+            - db
+        volumes:
+            - storage:/var/www/html/storage
+        networks:
+            - fullstack-network
+
+    db:
+        image: mysql:8.0
+        container_name: ${APP_NAME}_db
+        restart: unless-stopped
+        environment:
+            - MYSQL_DATABASE=laravel
+            - MYSQL_USER=laravel
+            - MYSQL_PASSWORD=${DB_PASSWORD}
+            - MYSQL_ROOT_PASSWORD=${DB_ROOT_PASSWORD}
+        volumes:
+            - db_data:/var/lib/mysql
+        networks:
+            - fullstack-network
+
+#    nginx:
+#        image: nginx:alpine
+#        container_name: ${APP_NAME}_nginx
+#        ports:
+#            - "${APP_PORT}:80"
+#        volumes:
+#            - ./nginx.backend.conf:/etc/nginx/nginx.conf
+#        depends_on:
+#            - backend
+#        restart: unless-stopped
+#        networks:
+#            - fullstack-network
+
+networks:
+    fullstack-network:
+        external: true
+
+volumes:
+    db_data:
+    storage:

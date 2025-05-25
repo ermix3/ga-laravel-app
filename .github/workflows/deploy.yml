@@ -1,0 +1,157 @@
+name: Deploy Laravel Backend
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  REGISTRY: docker.io
+  IMAGE_NAME: laravel-backend
+  SHORT_SHA: ${{ github.sha }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_TOKEN }}
+
+      - name: Set short SHA
+        run: echo "SHORT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+
+      - name: Build and push
+        uses: docker/build-push-action@v3
+        with:
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.SHORT_SHA }}
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up SSH key
+        uses: shimataro/ssh-key-action@v2
+        with:
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          known_hosts: ${{ secrets.SSH_KNOWN_HOSTS }}
+
+      - name: Check and install Docker on remote server
+        run: |
+          ssh -o StrictHostKeyChecking=no root@${{ secrets.SERVER_IP }} << EOF
+            # Check if Docker is installed
+            if ! command -v docker &> /dev/null; then
+              echo "Docker not found. Installing Docker..."
+              apt-get update
+              apt-get install -y ca-certificates curl gnupg
+              install -m 0755 -d /etc/apt/keyrings
+              curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+              chmod a+r /etc/apt/keyrings/docker.gpg
+              echo "deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \$(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+              apt-get update
+              apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+              echo "Docker installed successfully."
+            else
+              echo "Docker is already installed."
+            fi
+
+            # Check if Docker Compose is installed
+            if ! command -v docker compose &> /dev/null && ! command -v docker-compose &> /dev/null; then
+              echo "Docker Compose not found. Installing Docker Compose..."
+              apt-get update
+              apt-get install -y docker-compose-plugin
+
+              # If the plugin fails, try the standalone version as fallback
+              if ! command -v docker compose &> /dev/null; then
+                echo "Installing standalone Docker Compose as fallback..."
+                curl -SL https://github.com/docker/compose/releases/download/v2.23.3/docker-compose-linux-x86_64 -o /usr/local/bin/docker-compose
+                chmod +x /usr/local/bin/docker-compose
+              fi
+
+              echo "Docker Compose installed successfully."
+            else
+              echo "Docker Compose is already installed."
+            fi
+
+            # Create backend directory if it doesn't exist
+            mkdir -p /backend
+          EOF
+
+      - name: Copy docker-compose and config to server
+        run: |
+          scp -o StrictHostKeyChecking=no docker-compose.yml root@${{ secrets.SERVER_IP }}:/backend/docker-compose.prod.yml
+          scp -o StrictHostKeyChecking=no nginx.backend.conf root@${{ secrets.SERVER_IP }}:/backend
+
+      - name: Create .env file on server
+        run: |
+          ssh -o StrictHostKeyChecking=no root@${{ secrets.SERVER_IP }} << EOF
+            cat > /backend/.env << 'END'
+            APP_NAME=Laravel
+            APP_ENV=production
+            APP_DEBUG=false
+            APP_URL=https://api.yourdomain.com
+            APP_KEY=${{ secrets.APP_KEY }}
+
+            LOG_CHANNEL=stack
+            LOG_LEVEL=warning
+
+            DB_CONNECTION=mysql
+            DB_HOST=db
+            DB_PORT=3306
+            DB_DATABASE=laravel
+            DB_USERNAME=laravel
+            DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+
+            BROADCAST_DRIVER=log
+            CACHE_DRIVER=file
+            QUEUE_CONNECTION=sync
+            SESSION_DRIVER=file
+            SESSION_LIFETIME=120
+
+            REDIS_HOST=redis
+            REDIS_PASSWORD=null
+            REDIS_PORT=6379
+
+            DB_ROOT_PASSWORD=${{ secrets.DB_ROOT_PASSWORD }}
+            END
+          EOF
+
+      - name: Deploy Backend via SSH
+        run: |
+          ssh -o StrictHostKeyChecking=no root@${{ secrets.SERVER_IP }} << EOF
+            cd /backend
+            # Update the Docker image reference in docker-compose to use your DockerHub username
+            sed -i 's/ermix3/${{ secrets.DOCKER_HUB_USERNAME }}/g' docker-compose.prod.yml
+
+            # Pull the latest image
+            docker pull ${{ env.REGISTRY }}/${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
+
+            # Run with the appropriate docker-compose command
+            if command -v docker compose &> /dev/null; then
+              docker compose -f docker-compose.prod.yml down
+              docker compose -f docker-compose.prod.yml up -d
+            else
+              docker-compose -f docker-compose.prod.yml down
+              docker-compose -f docker-compose.prod.yml up -d
+            fi
+
+            # Run migrations after a short delay to ensure services are up
+            sleep 10
+            if command -v docker compose &> /dev/null; then
+              docker compose -f docker-compose.prod.yml exec -T backend php artisan migrate --force
+            else
+              docker-compose -f docker-compose.prod.yml exec -T backend php artisan migrate --force
+            fi
+          EOF
