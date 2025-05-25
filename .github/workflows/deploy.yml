@@ -89,10 +89,9 @@ jobs:
             mkdir -p /backend
           EOF
 
-      - name: Copy docker-compose and config to server
+      - name: Copy docker compose and config to server
         run: |
-          scp -o StrictHostKeyChecking=no docker-compose.yml root@${{ secrets.SERVER_IP }}:/backend/docker-compose.prod.yml
-          scp -o StrictHostKeyChecking=no nginx.backend.conf root@${{ secrets.SERVER_IP }}:/backend
+          scp -o StrictHostKeyChecking=no docker-compose.prod.yml root@${{ secrets.SERVER_IP }}:/backend/docker-compose.prod.yml
 
       - name: Create .env file on server
         run: |
@@ -132,13 +131,11 @@ jobs:
         run: |
           ssh -o StrictHostKeyChecking=no root@${{ secrets.SERVER_IP }} << EOF
             cd /backend
-            # Update the Docker image reference in docker-compose to use your DockerHub username
-            sed -i 's/ermix3/${{ secrets.DOCKER_HUB_USERNAME }}/g' docker-compose.prod.yml
 
             # Pull the latest image
             docker pull ${{ env.REGISTRY }}/${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
 
-            # Run with the appropriate docker-compose command
+            # Run with the appropriate docker compose command
             if command -v docker compose &> /dev/null; then
               docker compose -f docker-compose.prod.yml down
               docker compose -f docker-compose.prod.yml up -d
