@@ -9,6 +9,9 @@ env:
   REGISTRY: docker.io
   IMAGE_NAME: laravel-backend
   SHORT_SHA: ${{ github.sha }}
+  DB_DATABASE: laravel
+  DB_USERNAME: laravel
+  NETWORK_NAME: fullstack-network
 
 jobs:
   build-and-push:
@@ -96,34 +99,72 @@ jobs:
       - name: Create .env file on server
         run: |
           ssh -o StrictHostKeyChecking=no root@${{ secrets.SERVER_IP }} << EOF
-            cat > /backend/.env << 'END'
-            APP_NAME=${{ secrets.APP_NAME }}
-            APP_ENV=production
-            APP_DEBUG=false
-            APP_URL=https://api.yourdomain.com
-            APP_KEY=${{ secrets.APP_KEY }}
+            cat > /backend/.env << END
+              APP_NAME=${{ secrets.APP_NAME }}
+              APP_ENV=production
+              APP_KEY=${{ secrets.APP_KEY }}
+              APP_DEBUG=false
+              APP_URL=http://${{ secrets.SERVER_IP }}
 
-            LOG_CHANNEL=stack
-            LOG_LEVEL=warning
+              APP_LOCALE=en
+              APP_FALLBACK_LOCALE=en
+              APP_FAKER_LOCALE=en_US
 
-            DB_CONNECTION=mysql
-            DB_HOST=db
-            DB_PORT=3306
-            DB_DATABASE=laravel
-            DB_USERNAME=laravel
-            DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+              APP_MAINTENANCE_DRIVER=file
+              # APP_MAINTENANCE_STORE=database
 
-            BROADCAST_DRIVER=log
-            CACHE_DRIVER=file
-            QUEUE_CONNECTION=sync
-            SESSION_DRIVER=file
-            SESSION_LIFETIME=120
+              PHP_CLI_SERVER_WORKERS=4
 
-            REDIS_HOST=redis
-            REDIS_PASSWORD=null
-            REDIS_PORT=6379
+              BCRYPT_ROUNDS=12
 
-            DB_ROOT_PASSWORD=${{ secrets.DB_ROOT_PASSWORD }}
+              LOG_CHANNEL=stack
+              LOG_STACK=single
+              LOG_DEPRECATIONS_CHANNEL=null
+              LOG_LEVEL=debug
+
+              DB_CONNECTION=mysql
+              DB_HOST=db
+              DB_PORT=3306
+              DB_DATABASE=${{ env.DB_DATABASE }}
+              DB_USERNAME=${{ env.DB_USERNAME }}
+              DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+
+              SESSION_DRIVER=database
+              SESSION_LIFETIME=120
+              SESSION_ENCRYPT=false
+              SESSION_PATH=/
+              SESSION_DOMAIN=null
+
+              BROADCAST_CONNECTION=log
+              FILESYSTEM_DISK=local
+              QUEUE_CONNECTION=sync
+
+              CACHE_STORE=database
+              # CACHE_PREFIX=
+
+              MEMCACHED_HOST=127.0.0.1
+
+              REDIS_CLIENT=phpredis
+              REDIS_HOST=redis
+              REDIS_PASSWORD=null
+              REDIS_PORT=6379
+
+              MAIL_MAILER=log
+              MAIL_SCHEME=null
+              MAIL_HOST=127.0.0.1
+              MAIL_PORT=2525
+              MAIL_USERNAME=null
+              MAIL_PASSWORD=null
+              MAIL_FROM_ADDRESS="hello@example.com"
+              MAIL_FROM_NAME="${APP_NAME}"
+
+              AWS_ACCESS_KEY_ID=
+              AWS_SECRET_ACCESS_KEY=
+              AWS_DEFAULT_REGION=us-east-1
+              AWS_BUCKET=
+              AWS_USE_PATH_STYLE_ENDPOINT=false
+
+              VITE_APP_NAME="${APP_NAME}"
             END
           EOF
 
@@ -133,15 +174,22 @@ jobs:
             cd /backend
 
             export DOCKER_HUB_USERNAME=${{ secrets.DOCKER_HUB_USERNAME }}
+            export IMAGE_NAME=${{ env.IMAGE_NAME }}
             export APP_NAME=${{ secrets.APP_NAME }}
             export APP_KEY=${{ secrets.APP_KEY }}
             export DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+            export DB_DATABASE=${{ env.DB_DATABASE }}
+            export DB_USERNAME=${{ env.DB_USERNAME }}
+            export NETWORK_NAME=${{ env.NETWORK_NAME }}
             export DB_ROOT_PASSWORD=${{ secrets.DB_ROOT_PASSWORD }}
 
-            # Pull the latest image
+            echo "Pull the latest image"
             docker pull ${{ env.REGISTRY }}/${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
 
-            # Run with the appropriate docker compose command
+            echo "Ensuring network exists..."
+            docker network inspect \$NETWORK_NAME >/dev/null 2>&1 || docker network create \$NETWORK_NAME
+
+            echo "Run with the appropriate docker compose command"
             if command -v docker compose &> /dev/null; then
               docker compose -f docker-compose.prod.yml down
               docker compose -f docker-compose.prod.yml up -d
@@ -150,10 +198,10 @@ jobs:
               docker-compose -f docker-compose.prod.yml up -d
             fi
 
-            # Optional: Remove dangling/unused images to free disk space
+            echo "Remove unused images to free disk space"
             docker image prune -af
 
-            # Run migrations after a short delay to ensure services are up
+            echo "Run migrations after a short delay to ensure services are up"
             sleep 10
             if command -v docker compose &> /dev/null; then
               docker compose -f docker-compose.prod.yml exec -T backend php artisan migrate --force
