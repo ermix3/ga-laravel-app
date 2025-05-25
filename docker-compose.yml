@@ -1,6 +1,6 @@
 services:
     backend:
-        image: ${DOCKER_USERNAME}/laravel-backend:latest
+        image: ${DOCKER_HUB_USERNAME}/laravel-backend:latest
         container_name: ${APP_NAME}_backend
         restart: unless-stopped
         environment:
