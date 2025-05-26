@@ -1,24 +1,46 @@
-# Multi-stage build for production
-FROM composer:2 AS builder
-
-WORKDIR /app
-COPY . .
-RUN composer install --no-dev --optimize-autoloader
-
 FROM php:8.2-fpm-alpine
 
-WORKDIR /var/www/html
-COPY --from=builder /app .
-
-# Install dependencies
+# Install system dependencies
 RUN apk add --no-cache \
+    nginx \
+    bash \
+    curl \
+    git \
+    unzip \
+    libpng \
+    libpng-dev \
+    libjpeg-turbo \
+    libjpeg-turbo-dev \
+    freetype \
+    freetype-dev \
     libzip-dev \
     zip \
-    && docker-php-ext-install pdo pdo_mysql zip
+    icu-dev \
+    oniguruma-dev \
+    zlib-dev \
+    libxml2-dev \
+    shadow \
+    supervisor
 
-# Permissions
-RUN chown -R www-data:www-data /var/www/html/storage
-RUN chmod -R 775 /var/www/html/storage
+# Install PHP extensions
+RUN docker-php-ext-install pdo pdo_mysql zip mbstring intl gd bcmath
 
-# Environment variables will be passed at runtime
-CMD ["php-fpm"]
+# Set working directory
+WORKDIR /var/www/html
+
+# Copy Laravel project
+COPY . .
+
+# Copy custom nginx config
+COPY nginx.backend.conf /etc/nginx/nginx.conf
+
+# Give permissions
+RUN usermod -u 1000 www-data \
+    && chown -R www-data:www-data /var/www/html \
+    && chmod -R 755 /var/www/html/storage
+
+# Expose port for Nginx
+EXPOSE 8000
+
+# Start both PHP-FPM and Nginx
+CMD [ "sh", "-c", "php-fpm & nginx -g 'daemon off;'" ]
