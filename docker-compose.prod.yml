@@ -3,20 +3,12 @@ services:
     image: ${DOCKER_HUB_USERNAME}/${IMAGE_NAME}:latest
     container_name: ${APP_NAME}_backend
     restart: unless-stopped
-    environment:
-      - APP_NAME=${APP_NAME}
-      - APP_ENV=production
-      - APP_KEY=${APP_KEY}
-      - APP_URL=http://136.244.91.127
-      - DB_HOST=db
-      - DB_DATABASE=${DB_DATABASE}
-      - DB_USERNAME=${DB_USERNAME}
-      - DB_PASSWORD=${DB_PASSWORD}
     ports:
       - "8000:8000"
     depends_on:
       - db
     volumes:
+      - /backend/.env:/var/www/html/.env
       - storage:/var/www/html/storage
     networks:
       - fullstack-network

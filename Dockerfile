@@ -37,6 +37,9 @@ WORKDIR /var/www/html
 # Copy the app code from builder, including vendor folder
 COPY --from=builder /app /var/www/html
 
+# Clear any cached Laravel config from build context
+RUN php artisan config:clear && php artisan route:clear
+
 # Copy nginx config
 COPY nginx.backend.conf /etc/nginx/nginx.conf
 

@@ -39,6 +39,9 @@
 LICENSE
 README.md
 
+bootstrap/cache/
+!bootstrap/cache/.gitignore
+
 # Ignore development-related files and directories
 # For development environment, we will use mount bind to mount the source code to the container
 # So we don't need to copy the source code to the container for development
