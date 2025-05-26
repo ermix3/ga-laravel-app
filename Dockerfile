@@ -1,46 +1,51 @@
+# Stage 1: Build - install composer dependencies
+FROM composer:2 AS builder
+
+WORKDIR /app
+
+# Copy composer files separately for caching
+COPY composer.json composer.lock ./
+
+# Install PHP dependencies (no dev)
+RUN composer install --no-dev --optimize-autoloader --no-interaction --no-scripts --prefer-dist
+
+# Copy the rest of the app files
+COPY . .
+
+# Run any additional build steps here if needed (e.g. npm run production for assets)
+
+# Stage 2: Runtime - PHP + Nginx
 FROM php:8.2-fpm-alpine
 
-# Install system dependencies
+# Install system dependencies and PHP extensions
 RUN apk add --no-cache \
     nginx \
     bash \
-    curl \
-    git \
-    unzip \
-    libpng \
-    libpng-dev \
-    libjpeg-turbo \
-    libjpeg-turbo-dev \
-    freetype \
-    freetype-dev \
-    libzip-dev \
-    zip \
-    icu-dev \
-    oniguruma-dev \
-    zlib-dev \
-    libxml2-dev \
-    shadow \
-    supervisor
+    libpng libpng-dev \
+    libjpeg-turbo libjpeg-turbo-dev \
+    freetype freetype-dev \
+    libzip-dev zip \
+    icu-dev oniguruma-dev zlib-dev libxml2-dev shadow supervisor \
+    && docker-php-ext-configure gd --with-freetype --with-jpeg \
+    && docker-php-ext-install pdo pdo_mysql zip mbstring intl gd bcmath opcache
 
-# Install PHP extensions
-RUN docker-php-ext-install pdo pdo_mysql zip mbstring intl gd bcmath
+# Create www-data user with uid 1000 (for permission consistency)
+RUN usermod -u 1000 www-data
 
-# Set working directory
 WORKDIR /var/www/html
 
-# Copy Laravel project
-COPY . .
+# Copy the app code from builder, including vendor folder
+COPY --from=builder /app /var/www/html
 
-# Copy custom nginx config
+# Copy nginx config
 COPY nginx.backend.conf /etc/nginx/nginx.conf
 
-# Give permissions
-RUN usermod -u 1000 www-data \
-    && chown -R www-data:www-data /var/www/html \
-    && chmod -R 755 /var/www/html/storage
+# Permissions for storage and bootstrap cache
+RUN chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache \
+    && chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache
 
-# Expose port for Nginx
+# Expose port 8000
 EXPOSE 8000
 
-# Start both PHP-FPM and Nginx
-CMD [ "sh", "-c", "php-fpm & nginx -g 'daemon off;'" ]
+# Start PHP-FPM and Nginx together
+CMD ["sh", "-c", "php-fpm & nginx -g 'daemon off;'"]
