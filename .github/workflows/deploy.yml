@@ -108,9 +108,13 @@ jobs:
 
       - name: Copy docker compose and config to server
         run: |
+          # Then copy the files
           scp -o StrictHostKeyChecking=no docker-compose.prod.yml root@${{ secrets.SERVER_IP }}:/backend/docker-compose.prod.yml
           scp -o StrictHostKeyChecking=no db-entrypoint.sh root@${{ secrets.SERVER_IP }}:/backend/db-entrypoint.sh
           scp -o StrictHostKeyChecking=no db-backup.sh root@${{ secrets.SERVER_IP }}:/backend/db-backup.sh
+
+          # Set executable permissions on scripts
+          ssh -o StrictHostKeyChecking=no root@${{ secrets.SERVER_IP }} "chmod +x /backend/db-entrypoint.sh /backend/db-backup.sh"
 
       - name: Create .env file on server
         run: |
