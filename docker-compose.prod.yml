@@ -43,7 +43,7 @@ services:
       - ./db-backup.sh:/db-backup.sh:ro
       # Mount custom entrypoint that sets up cron
       - ./db-entrypoint.sh:/custom-entrypoint.sh:ro
-    command: ["/custom-entrypoint.sh"]
+    command: ["bash", "/custom-entrypoint.sh"]
     networks:
       - fullstack-network
 

@@ -8,14 +8,14 @@ if ! command -v cron &> /dev/null; then
 fi
 
 # Make backup script executable
-chmod +x /backup-script.sh
+chmod +x /db-backup.sh
 
 # Set up cron job for automated backups at midnight
 CRON_SCHEDULE=${BACKUP_SCHEDULE:-"0 0 * * *"}
 echo "Setting up backup cron job with schedule: $CRON_SCHEDULE"
 
 # Create cron job that runs the backup script
-echo "$CRON_SCHEDULE root /backup-script.sh >> /backups/backup.log 2>&1" > /etc/cron.d/mysql-backup
+echo "$CRON_SCHEDULE root /db-backup.sh >> /backups/backup.log 2>&1" > /etc/cron.d/mysql-backup
 
 # Give execution permissions to cron job file
 chmod 0644 /etc/cron.d/mysql-backup
