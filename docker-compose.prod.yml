@@ -3,8 +3,6 @@ services:
     image: ${DOCKER_HUB_USERNAME}/${IMAGE_NAME}:latest
     container_name: ${APP_NAME}_backend
     restart: unless-stopped
-    ports:
-      - "8000:8000"
     depends_on:
       - db
     volumes:
