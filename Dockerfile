@@ -47,8 +47,7 @@ COPY nginx.backend.conf /etc/nginx/nginx.conf
 # Ensure php-fpm uses a socket
 RUN chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache \
     && chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache \
-    && sed -i 's|^listen = .*|listen = /run/php/php-fpm.sock|' /usr/local/etc/php-fpm.d/www.conf \
-    && mkdir -p /run/php && chown www-data:www-data /run/php
+    && sed -i 's|^listen = .*|listen = 9000|' /usr/local/etc/php-fpm.d/www.conf
 
 # Expose port 8000
 EXPOSE 8000
