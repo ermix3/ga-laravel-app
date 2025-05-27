@@ -16,7 +16,13 @@ log_message() {
     echo "$(date '+%Y-%m-%d %H:%M:%S'): $1" | tee -a $LOG_FILE
 }
 
-log_message "Starting database backup..."
+# Check if required environment variables are set
+if [[ -z "$MYSQL_USER" || -z "$MYSQL_PASSWORD" || -z "$MYSQL_DATABASE" ]]; then
+    log_message "ERROR: Required environment variables (MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE) are not set."
+    exit 1
+fi
+
+log_message "Starting database backup for database: $MYSQL_DATABASE, user: $MYSQL, host: $MYSQL_HOST"
 
 # Wait for MySQL to be ready (in case this runs at startup)
 until mysqladmin ping -h $MYSQL_HOST --silent; do
