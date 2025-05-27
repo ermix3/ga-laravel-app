@@ -91,8 +91,8 @@ jobs:
               echo "Docker Compose is already installed."
             fi
 
-            echo "Create backend directory if it doesn't exist"
-            mkdir -p /backend
+            echo "Create backend, backend_data directories if doesn't exist"
+            mkdir -p /backend/backend_data
 
             # Ensuring Docker network exists...
             if ! docker network inspect "$NETWORK_NAME" >/dev/null 2>&1; then
@@ -109,6 +109,8 @@ jobs:
       - name: Copy docker compose and config to server
         run: |
           scp -o StrictHostKeyChecking=no docker-compose.prod.yml root@${{ secrets.SERVER_IP }}:/backend/docker-compose.prod.yml
+          scp -o StrictHostKeyChecking=no db-entrypoint.sh root@${{ secrets.SERVER_IP }}:/backend/db-entrypoint.sh
+          scp -o StrictHostKeyChecking=no db-backup.sh root@${{ secrets.SERVER_IP }}:/backend/db-backup.sh
 
       - name: Create .env file on server
         run: |
@@ -116,7 +118,6 @@ jobs:
             cat > /backend/.env << 'EOT'
           APP_NAME=${{ secrets.APP_NAME }}
           APP_ENV=production
-          APP_KEY=${{ secrets.APP_KEY }}
           APP_DEBUG=false
           APP_URL=http://${{ secrets.SERVER_IP }}
 
@@ -190,29 +191,163 @@ jobs:
             export DOCKER_HUB_USERNAME=${{ secrets.DOCKER_HUB_USERNAME }}
             export IMAGE_NAME=${{ env.IMAGE_NAME }}
             export APP_NAME=${{ secrets.APP_NAME }}
-            export APP_KEY=${{ secrets.APP_KEY }}
             export DB_PASSWORD=${{ secrets.DB_PASSWORD }}
             export DB_DATABASE=${{ env.DB_DATABASE }}
             export DB_USERNAME=${{ env.DB_USERNAME }}
             export DB_ROOT_PASSWORD=${{ secrets.DB_ROOT_PASSWORD }}
 
+            # Set docker compose command
+            if command -v docker compose &> /dev/null; then
+              DOCKER_COMPOSE="docker compose"
+            else
+              DOCKER_COMPOSE="docker-compose"
+            fi
+
+            echo "=== Starting Zero-Downtime Deployment ==="
+
             echo "Pull the latest image"
             docker pull ${{ env.REGISTRY }}/${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
 
-            echo "Run with the appropriate docker compose command"
-            if command -v docker compose &> /dev/null; then
-              docker compose -f docker-compose.prod.yml down
-              docker compose -f docker-compose.prod.yml up -d
-            else
-              docker-compose -f docker-compose.prod.yml down
-              docker-compose -f docker-compose.prod.yml up -d
+            # Check if this is the first deployment
+            if ! $DOCKER_COMPOSE -f docker-compose.prod.yml ps | grep -q "${APP_NAME}_backend"; then
+              echo "First deployment detected - starting services normally..."
+              $DOCKER_COMPOSE -f docker-compose.prod.yml up -d
+
+              # Wait for services to be ready
+              echo "Waiting for services to start..."
+              sleep 30
+
+              echo "Generating application key..."
+              $DOCKER_COMPOSE -f docker-compose.prod.yml exec -T backend php artisan key:generate
+
+              echo "Running database migrations..."
+              $DOCKER_COMPOSE -f docker-compose.prod.yml exec -T backend php artisan migrate --force
+
+              echo "First deployment completed successfully!"
+              exit 0
             fi
 
-            echo "Run migrations after a short delay to ensure services are up"
-            sleep 10
-            if command -v docker compose &> /dev/null; then
-              docker compose -f docker-compose.prod.yml exec -T backend php artisan migrate --force
-            else
-              docker-compose -f docker-compose.prod.yml exec -T backend php artisan migrate --force
+            echo "Existing deployment detected - performing zero-downtime update..."
+
+            # Create a backup of current container
+            CURRENT_CONTAINER="${APP_NAME}_backend"
+            BACKUP_CONTAINER="${APP_NAME}_backend_backup"
+
+            echo "Creating backup of current container..."
+            docker rename $CURRENT_CONTAINER $BACKUP_CONTAINER 2>/dev/null || true
+
+            # Start new container with updated image
+            echo "Starting new container with latest image..."
+            $DOCKER_COMPOSE -f docker-compose.prod.yml up -d backend
+
+            # Wait for new container to be ready
+            echo "Waiting for new container to be ready..."
+            RETRY_COUNT=0
+            MAX_RETRIES=30
+
+            while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+              if docker exec ${APP_NAME}_backend php artisan --version >/dev/null 2>&1; then
+                echo "New container is responding to artisan commands"
+                break
+              fi
+              echo "Waiting for container to be ready... (attempt $((RETRY_COUNT + 1))/$MAX_RETRIES)"
+              sleep 2
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+            done
+
+            if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+              echo "ERROR: New container failed to start properly"
+              echo "Rolling back to previous container..."
+
+              # Stop the failed new container
+              docker stop ${APP_NAME}_backend 2>/dev/null || true
+              docker rm ${APP_NAME}_backend 2>/dev/null || true
+
+              # Restore backup container
+              docker rename $BACKUP_CONTAINER $CURRENT_CONTAINER
+              docker start $CURRENT_CONTAINER
+
+              echo "Rollback completed. Deployment failed."
+              exit 1
             fi
+
+            echo "Generating application key..."
+            $DOCKER_COMPOSE -f docker-compose.prod.yml exec -T backend php artisan key:generate
+
+            echo "Running database migrations on new container..."
+            if ! $DOCKER_COMPOSE -f docker-compose.prod.yml exec -T backend php artisan migrate --force; then
+              echo "ERROR: Migration failed"
+              echo "Rolling back to previous container..."
+
+              # Stop the new container
+              docker stop ${APP_NAME}_backend
+              docker rm ${APP_NAME}_backend
+
+              # Restore backup container
+              docker rename $BACKUP_CONTAINER $CURRENT_CONTAINER
+              docker start $CURRENT_CONTAINER
+
+              echo "Rollback completed due to migration failure."
+              exit 1
+            fi
+
+            # Health check on new container
+            echo "Performing health check..."
+            HEALTH_CHECK_RETRIES=0
+            MAX_HEALTH_RETRIES=10
+
+            while [ $HEALTH_CHECK_RETRIES -lt $MAX_HEALTH_RETRIES ]; do
+              # Check if Laravel is responding (you can customize this check)
+              if docker exec ${APP_NAME}_backend php artisan route:list >/dev/null 2>&1; then
+                echo "Health check passed!"
+                break
+              fi
+              echo "Health check attempt $((HEALTH_CHECK_RETRIES + 1))/$MAX_HEALTH_RETRIES failed, retrying..."
+              sleep 3
+              HEALTH_CHECK_RETRIES=$((HEALTH_CHECK_RETRIES + 1))
+            done
+
+            if [ $HEALTH_CHECK_RETRIES -eq $MAX_HEALTH_RETRIES ]; then
+              echo "ERROR: Health check failed after $MAX_HEALTH_RETRIES attempts"
+              echo "Rolling back to previous container..."
+
+              # Stop the failed container
+              docker stop ${APP_NAME}_backend
+              docker rm ${APP_NAME}_backend
+
+              # Restore backup container
+              docker rename $BACKUP_CONTAINER $CURRENT_CONTAINER
+              docker start $CURRENT_CONTAINER
+
+              echo "Rollback completed due to health check failure."
+              exit 1
+            fi
+
+            # Clean up backup container if deployment successful
+            echo "Deployment successful! Cleaning up backup container..."
+            docker stop $BACKUP_CONTAINER 2>/dev/null || true
+            docker rm $BACKUP_CONTAINER 2>/dev/null || true
+
+            # Ensure all services are running
+            echo "Ensuring all services are running..."
+            $DOCKER_COMPOSE -f docker-compose.prod.yml up -d
+
+            # Clear Laravel caches for good measure
+            echo "Clearing Laravel caches..."
+            $DOCKER_COMPOSE -f docker-compose.prod.yml exec -T backend php artisan config:clear
+            $DOCKER_COMPOSE -f docker-compose.prod.yml exec -T backend php artisan route:clear
+            $DOCKER_COMPOSE -f docker-compose.prod.yml exec -T backend php artisan view:clear
+
+            # Clean up old images to save space
+            echo "Cleaning up old Docker images..."
+            docker image prune -af
+
+            echo "=== Zero-Downtime Deployment Completed Successfully ==="
+
+            # Display deployment info
+            echo "Deployment Summary:"
+            echo "- Image: ${{ env.REGISTRY }}/${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest"
+            echo "- SHA: $SHORT_SHA"
+            echo "- Container: ${APP_NAME}_backend"
+            echo "- Status: $(docker inspect --format='{{.State.Status}}' ${APP_NAME}_backend)"
           EOF

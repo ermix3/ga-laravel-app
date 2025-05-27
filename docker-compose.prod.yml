@@ -5,9 +5,15 @@ services:
     restart: unless-stopped
     depends_on:
       - db
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     volumes:
-      - /backend/.env:/var/www/html/.env
-      - storage:/var/www/html/storage
+      - ./.env:/var/www/html/.env
+      - ./backend_data/storage:/var/www/html/storage
     networks:
       - fullstack-network
 
@@ -20,8 +26,24 @@ services:
       - MYSQL_USER=${DB_USERNAME}
       - MYSQL_PASSWORD=${DB_PASSWORD}
       - MYSQL_ROOT_PASSWORD=${DB_ROOT_PASSWORD}
+      # Backup configuration
+      - BACKUP_RETENTION_DAYS=7
+      - BACKUP_SCHEDULE=* * * * *
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     volumes:
-      - db_data:/var/lib/mysql
+      - ./db_data:/var/lib/mysql
+      # Mount backup directory
+      - ./backups:/backups
+      # Mount backup script
+      - ./db-backup.sh:/db-backup.sh:ro
+      # Mount custom entrypoint that sets up cron
+      - ./db-entrypoint.sh:/custom-entrypoint.sh:ro
+    command: ["/custom-entrypoint.sh"]
     networks:
       - fullstack-network
 
@@ -42,6 +64,3 @@ networks:
   fullstack-network:
     external: true
 
-volumes:
-  db_data:
-  storage:
