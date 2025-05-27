@@ -2,15 +2,16 @@
 set -e
 
 # Install cron if not already installed
-if ! command -v cron &> /dev/null; then
-    echo "Installing cron..."
+if ! command -v crond &> /dev/null; then
+    echo "Installing crond..."
     if command -v microdnf &> /dev/null; then
-        # For Oracle Linux 8 (newer MySQL images)
+        echo "Using microdnf to install cronie"
         microdnf install -y cronie && microdnf clean all
     elif command -v dnf &> /dev/null; then
+        echo "Using dnf to install cronie"
         dnf install -y cronie && dnf clean all
     elif command -v yum &> /dev/null; then
-        # For older Oracle Linux versions
+        echo "Using yum to install cronie"
         yum install -y cronie && yum clean all
     else
         echo "ERROR: No supported package manager found"
@@ -32,12 +33,9 @@ echo "$CRON_SCHEDULE root /bin/bash /db-backup.sh >> /backups/backup.log 2>&1" >
 # Give execution permissions to cron job file
 chmod 0644 /etc/cron.d/mysql-backup
 
-# Apply cron job
-crontab /etc/cron.d/mysql-backup
-
 # Start cron daemon in background
 echo "Starting cron daemon..."
-cron
+crond
 
 echo "Backup system initialized successfully"
 echo "Schedule: $CRON_SCHEDULE"
