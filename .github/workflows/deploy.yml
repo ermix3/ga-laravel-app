@@ -121,6 +121,7 @@ jobs:
           ssh -o StrictHostKeyChecking=no root@${{ secrets.SERVER_IP }} << 'EOF'
             cat > /backend/.env << 'EOT'
           APP_NAME=${{ secrets.APP_NAME }}
+          APP_KEY=
           APP_ENV=production
           APP_DEBUG=false
           APP_URL=http://${{ secrets.SERVER_IP }}
