@@ -185,7 +185,7 @@ jobs:
 
       - name: Deploy Backend via SSH
         run: |
-          ssh -o StrictHostKeyChecking=no root@${{ secrets.SERVER_IP }} << EOF
+          ssh -o StrictHostKeyChecking=no root@${{ secrets.SERVER_IP }} << 'EOF'
             cd /backend
 
             export DOCKER_HUB_USERNAME=${{ secrets.DOCKER_HUB_USERNAME }}
@@ -199,9 +199,14 @@ jobs:
             # Set docker compose command
             if command -v docker compose &> /dev/null; then
               DOCKER_COMPOSE="docker compose"
-            else
+            elif command -v docker-compose &> /dev/null; then
               DOCKER_COMPOSE="docker-compose"
+            else
+              echo "ERROR: Docker Compose is not installed!"
+              exit 1
             fi
+
+            echo "Using Docker Compose command: $DOCKER_COMPOSE"
 
             echo "=== Starting Zero-Downtime Deployment ==="
 
