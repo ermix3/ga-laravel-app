@@ -23,12 +23,18 @@ fi
 mkdir -p /backups
 touch /backups/backup.log
 
+# Export environment variables for cron
+printenv | grep -E 'MYSQL_|BACKUP_RETENTION_DAYS' > /etc/cron.env
+
+# Make sure variables are exported properly
+echo "export $(cat /etc/cron.env | xargs)" > /etc/cron.env
+
 # Set up cron job for automated backups at midnight
 CRON_SCHEDULE=${BACKUP_SCHEDULE:-"0 0 * * *"}
 echo "Setting up backup cron job with schedule: $CRON_SCHEDULE"
 
-# Create cron job that runs the backup script
-echo "$CRON_SCHEDULE root /bin/bash /db-backup.sh >> /backups/backup.log 2>&1" > /etc/cron.d/mysql-backup
+# Create cron job that runs the backup script with sourced environment
+echo "$CRON_SCHEDULE root . /etc/cron.env && /bin/bash /db-backup.sh >> /backups/backup.log 2>&1" > /etc/cron.d/mysql-backup
 
 # Give execution permissions to cron job file
 chmod 0644 /etc/cron.d/mysql-backup
