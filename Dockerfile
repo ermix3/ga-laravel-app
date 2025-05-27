@@ -29,6 +29,16 @@ RUN apk add --no-cache \
     && docker-php-ext-configure gd --with-freetype --with-jpeg \
     && docker-php-ext-install pdo pdo_mysql zip mbstring intl gd bcmath opcache
 
+# Configure PHP for file uploads
+RUN { \
+    echo 'file_uploads = On'; \
+    echo 'upload_max_filesize = 20M'; \
+    echo 'post_max_size = 21M'; \
+    echo 'memory_limit = 256M'; \
+    echo 'max_execution_time = 300'; \
+    echo 'max_input_time = 300'; \
+} > /usr/local/etc/php/conf.d/uploads.ini
+
 # Create www-data user with uid 1000 (for permission consistency)
 RUN usermod -u 1000 www-data
 

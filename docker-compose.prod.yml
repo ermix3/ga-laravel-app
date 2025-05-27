@@ -33,8 +33,8 @@ services:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 10s
       timeout: 5s
-      retries: 5
-      start_period: 30s
+      retries: 10
+      start_period: 90s
     volumes:
       - ./db_data:/var/lib/mysql
       # Mount backup directory
