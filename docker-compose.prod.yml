@@ -33,8 +33,6 @@ services:
       - PMA_HOST=db
       - PMA_PORT=3306
       - MYSQL_ROOT_PASSWORD=${DB_ROOT_PASSWORD}
-    ports:
-      - "8080:80"
     depends_on:
       - db
     networks:
