@@ -44,8 +44,11 @@ RUN php artisan config:clear && php artisan route:clear
 COPY nginx.backend.conf /etc/nginx/nginx.conf
 
 # Permissions for storage and bootstrap cache
+# Ensure php-fpm uses a socket
 RUN chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache \
-    && chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache
+    && chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache \
+    && sed -i 's|^listen = .*|listen = /run/php/php-fpm.sock|' /usr/local/etc/php-fpm.d/www.conf \
+    && mkdir -p /run/php && chown www-data:www-data /run/php
 
 # Expose port 8000
 EXPOSE 8000
