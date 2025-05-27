@@ -22,7 +22,7 @@ if [[ -z "$MYSQL_USER" || -z "$MYSQL_PASSWORD" || -z "$MYSQL_DATABASE" ]]; then
     exit 1
 fi
 
-log_message "Starting database backup for database: $MYSQL_DATABASE, user: $MYSQL, host: $MYSQL_HOST"
+log_message "Starting database backup for database: $MYSQL_DATABASE, user: $MYSQL_USER, host: $MYSQL_HOST"
 
 # Wait for MySQL to be ready (in case this runs at startup)
 until mysqladmin ping -h $MYSQL_HOST --silent; do
