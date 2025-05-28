@@ -91,8 +91,12 @@ jobs:
               echo "Docker Compose is already installed."
             fi
 
-            echo "Create backend, backend_data directories if doesn't exist"
-            mkdir -p /backend/backend_data
+            echo "Create required directories with correct permissions"
+            mkdir -p /backend/backend_data/storage/{app,framework,logs} /backend/backend_data/bootstrap/cache
+            chmod -R 775 /backend/backend_data/storage /backend/backend_data/bootstrap/cache
+
+            echo "Set ownership (adjust UID/GID if your container uses different values)"
+            chown -R 1000:1000 /backend/backend_data/storage /backend/backend_data/bootstrap/cache
 
             # Ensuring Docker network exists...
             if ! docker network inspect "$NETWORK_NAME" >/dev/null 2>&1; then
