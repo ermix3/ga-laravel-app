@@ -185,6 +185,9 @@ jobs:
           AWS_USE_PATH_STYLE_ENDPOINT=false
 
           VITE_APP_NAME="${APP_NAME}"
+
+          SENTRY_LARAVEL_DSN=https://fa1754811b79a0c156f780a72a9452aa@o4505835992186880.ingest.us.sentry.io/4509400187076608
+          SENTRY_TRACES_SAMPLE_RATE=1.0
           EOT
           EOF
 
