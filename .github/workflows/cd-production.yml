@@ -7,7 +7,7 @@ on:
     branches: [ main ]
 
 env:
-  APP_NAME: LaravelApp
+  APP_NAME: Ecom
   IMAGE_NAME: laravel-backend
   NETWORK_NAME: fullstack-network
 
