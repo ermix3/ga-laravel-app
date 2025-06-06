@@ -170,8 +170,6 @@ jobs:
           EOF
 
       - name: 🚀 Deploy Backend via SSH
-        env:
-          BACKEND_IMAGE: ${{ secrets.DOCKER_PROVIDER_NAME }}/${{ secrets.DOCKER_PROVIDER_USERNAME }}/${{ env.IMAGE_NAME }}:latest
         run: |
           ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST_IP }} << 'EOF'
 
@@ -202,9 +200,6 @@ jobs:
             echo "Using Docker Compose command: $DOCKER_COMPOSE"
 
             echo "=== Starting Zero-Downtime Deployment ==="
-
-            echo "📥 Pulling latest backend image..."
-            docker pull ${BACKEND_IMAGE}
 
             # Check if this is the first deployment
             if ! $DOCKER_COMPOSE -f docker-compose.prod.yml ps | grep -q "${APP_NAME}_backend"; then
@@ -241,7 +236,18 @@ jobs:
               echo "Running database migrations..."
               $DOCKER_COMPOSE -f docker-compose.prod.yml exec -T backend php artisan migrate --force
 
+              # Clear Laravel caches for good measure
+              echo "Clearing Laravel caches..."
+              $DOCKER_COMPOSE -f docker-compose.prod.yml exec -T backend php artisan config:clear
+              $DOCKER_COMPOSE -f docker-compose.prod.yml exec -T backend php artisan route:clear
+              $DOCKER_COMPOSE -f docker-compose.prod.yml exec -T backend php artisan view:clear
+
               echo "First deployment completed successfully!"
+
+              echo "Deployment Summary:"
+              echo "- Image: $BACKEND_IMAGE"
+              echo "- Container: ${APP_NAME}_backend"
+              echo "- Status: $(docker inspect --format='{{.State.Status}}' ${APP_NAME}_backend)"
               exit 0
             fi
 
@@ -355,10 +361,6 @@ jobs:
             $DOCKER_COMPOSE -f docker-compose.prod.yml exec -T backend php artisan config:clear
             $DOCKER_COMPOSE -f docker-compose.prod.yml exec -T backend php artisan route:clear
             $DOCKER_COMPOSE -f docker-compose.prod.yml exec -T backend php artisan view:clear
-
-            # Clean up old images to save space
-            echo "Cleaning up old Docker images..."
-            docker image prune -af
 
             echo "=== Zero-Downtime Deployment Completed Successfully ==="
 
