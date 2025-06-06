@@ -26,6 +26,10 @@ jobs:
           path: ./deployment
           run_id: ${{ github.event.workflow_run.id }}
 
+      - name: Read image tag
+        id: read-tag
+        run: echo "IMAGE_TAG=$(cat ./deployment/image_tag.txt)" >> $GITHUB_ENV
+
       - name: 🔐 Set up SSH Key
         uses: shimataro/ssh-key-action@v2
         with:
@@ -97,7 +101,7 @@ jobs:
       - name: Create .env file on server
         run: |
           ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST_IP }} << 'EOF'
-            cat > /backend/.env << 'EOT'
+          cat > /backend/.env << 'EOT'
           APP_NAME=${{ env.APP_NAME }}
           APP_KEY=
           APP_ENV=production
@@ -169,12 +173,14 @@ jobs:
           EOT
           EOF
 
-      - name: 🚀 Deploy Backend via SSH
+      - name: 🚀 Deploy Laravel App
         run: |
           ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST_IP }} << 'EOF'
 
             export DOCKER_PROVIDER_USERNAME=${{ secrets.DOCKER_PROVIDER_USERNAME }}
             export IMAGE_NAME=${{ env.IMAGE_NAME }}
+            export IMAGE_TAG=${{ env.IMAGE_TAG }}
+            export BACKEND_IMAGE=${{ secrets.DOCKER_PROVIDER_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
             export APP_NAME=${{ env.APP_NAME }}
             export DB_ROOT_PASSWORD=${{ secrets.DB_ROOT_PASSWORD }}
             export DB_PASSWORD=${{ secrets.DB_PASSWORD }}
@@ -275,6 +281,8 @@ jobs:
                 break
               fi
               echo "Waiting for container to be ready... (attempt $((RETRY_COUNT + 1))/$MAX_RETRIES)"
+              echo "🔍 Container logs:"
+              docker logs ${APP_NAME}_backend
               sleep 2
               RETRY_COUNT=$((RETRY_COUNT + 1))
             done

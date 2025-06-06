@@ -1,6 +1,6 @@
 services:
   backend:
-    image: ${DOCKER_PROVIDER_USERNAME}/${IMAGE_NAME}:latest
+    image: ${DOCKER_PROVIDER_USERNAME}/${IMAGE_NAME}:${IMAGE_TAG}
     container_name: ${APP_NAME}_backend
     restart: unless-stopped
     depends_on:
