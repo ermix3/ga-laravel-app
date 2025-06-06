@@ -1,0 +1,370 @@
+name: CD - Laravel App deploy to server [Development]
+
+on:
+  workflow_run:
+    workflows: [ "CI - Laravel Build and Test" ]
+    types: [ completed ]
+    branches: [ develop ]
+
+env:
+  APP_NAME: LaravelApp
+  IMAGE_NAME: laravel-backend
+  NETWORK_NAME: fullstack-network
+
+jobs:
+  deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Download deployment files from CI workflow
+        uses: dawidd6/action-download-artifact@v10
+        with:
+          workflow: ci.yml
+          workflow_conclusion: success
+          name: deploy-files
+          path: ./deployment
+          run_id: ${{ github.event.workflow_run.id }}
+
+      - name: 🔐 Set up SSH Key
+        uses: shimataro/ssh-key-action@v2
+        with:
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          known_hosts: ${{ secrets.SSH_KNOWN_HOSTS }}
+
+      - name: 🛠️ Prepare Remote Server (Install Docker & Compose, Setup Directory & Network)
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME_DEV }}@${{ secrets.SSH_HOST_IP_DEV }} << EOF
+
+            export NETWORK_NAME=${{ env.NETWORK_NAME }}
+
+            echo "🔍 Checking Docker installation..."
+            if ! command -v docker &> /dev/null; then
+              echo "📦 Installing Docker..."
+              apt-get update
+              apt-get install -y ca-certificates curl gnupg
+              install -m 0755 -d /etc/apt/keyrings
+              curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+              chmod a+r /etc/apt/keyrings/docker.gpg
+              echo "deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \$(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+              apt-get update
+              apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+              echo "✅ Docker installed."
+            else
+              echo "✅ Docker already installed."
+            fi
+
+            echo "🔍 Checking Docker Compose installation..."
+            if ! command -v docker compose &> /dev/null && ! command -v docker-compose &> /dev/null; then
+              echo "📦 Installing Docker Compose..."
+              apt-get update
+              apt-get install -y docker-compose-plugin
+
+              if ! command -v docker compose &> /dev/null; then
+                echo "📦 Installing standalone Docker Compose (fallback)..."
+                curl -SL https://github.com/docker/compose/releases/download/v2.23.3/docker-compose-linux-x86_64 -o /usr/local/bin/docker-compose
+                chmod +x /usr/local/bin/docker-compose
+              fi
+
+              echo "✅ Docker Compose installed."
+            else
+              echo "✅ Docker Compose already installed."
+            fi
+
+            echo "📁 Create required directories with correct permissions"
+            mkdir -p /backend/backend_data/storage/{app,framework,logs} /backend/backend_data/bootstrap/cache
+            chmod -R 775 /backend/backend_data/storage /backend/backend_data/bootstrap/cache
+
+            echo "Set ownership (adjust UID/GID if your container uses different values)"
+            chown -R 1000:1000 /backend/backend_data/storage /backend/backend_data/bootstrap/cache
+
+            echo "🌐 Ensuring Docker network exists..."
+            if ! docker network inspect "$NETWORK_NAME" >/dev/null 2>&1; then
+              echo "🌐 Creating Docker network: $NETWORK_NAME"
+              docker network create "$NETWORK_NAME"
+            else
+              echo "✅ Docker network $NETWORK_NAME already exists."
+            fi
+
+            echo "🧼 Removing unused Docker images..."
+            docker image prune -af
+          EOF
+
+      - name: 📤 Copy docker-compose and NGINX config to Remote Server
+        run: |
+          scp -o StrictHostKeyChecking=no ./deployment/* ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST_IP }}:/backend
+
+      - name: Create .env file on server
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME_DEV }}@${{ secrets.SSH_HOST_IP_DEV }} << 'EOF'
+            cat > /backend/.env << 'EOT'
+          APP_NAME=${{ env.APP_NAME }}
+          APP_KEY=
+          APP_ENV=production
+          APP_DEBUG=false
+          APP_URL=http://${{ secrets.SSH_HOST_IP_DEV }}
+
+          APP_LOCALE=en
+          APP_FALLBACK_LOCALE=en
+          APP_FAKER_LOCALE=en_US
+
+          APP_MAINTENANCE_DRIVER=file
+          # APP_MAINTENANCE_STORE=database
+
+          PHP_CLI_SERVER_WORKERS=4
+
+          BCRYPT_ROUNDS=12
+
+          LOG_CHANNEL=stack
+          LOG_STACK=single
+          LOG_DEPRECATIONS_CHANNEL=null
+          LOG_LEVEL=debug
+
+          DB_CONNECTION=mysql
+          DB_HOST=db
+          DB_PORT=3306
+          DB_DATABASE=${{ secrets.DB_DATABASE }}
+          DB_USERNAME=${{ secrets.DB_USERNAME }}
+          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+
+          SESSION_DRIVER=database
+          SESSION_LIFETIME=120
+          SESSION_ENCRYPT=false
+          SESSION_PATH=/
+          SESSION_DOMAIN=null
+
+          BROADCAST_CONNECTION=log
+          FILESYSTEM_DISK=local
+          QUEUE_CONNECTION=sync
+
+          CACHE_STORE=database
+          # CACHE_PREFIX=
+
+          MEMCACHED_HOST=127.0.0.1
+
+          REDIS_CLIENT=phpredis
+          REDIS_HOST=redis
+          REDIS_PASSWORD=null
+          REDIS_PORT=6379
+
+          MAIL_MAILER=log
+          MAIL_SCHEME=null
+          MAIL_HOST=127.0.0.1
+          MAIL_PORT=2525
+          MAIL_USERNAME=null
+          MAIL_PASSWORD=null
+          MAIL_FROM_ADDRESS="hello@example.com"
+          MAIL_FROM_NAME="${APP_NAME}"
+
+          AWS_ACCESS_KEY_ID=
+          AWS_SECRET_ACCESS_KEY=
+          AWS_DEFAULT_REGION=us-east-1
+          AWS_BUCKET=
+          AWS_USE_PATH_STYLE_ENDPOINT=false
+
+          VITE_APP_NAME="${APP_NAME}"
+
+          SENTRY_LARAVEL_DSN=https://fa1754811b79a0c156f780a72a9452aa@o4505835992186880.ingest.us.sentry.io/4509400187076608
+          SENTRY_TRACES_SAMPLE_RATE=1.0
+          EOT
+          EOF
+
+      - name: 🚀 Deploy Backend via SSH
+        env:
+          BACKEND_IMAGE: ${{ secrets.DOCKER_PROVIDER_NAME }}/${{ secrets.DOCKER_PROVIDER_USERNAME }}/${{ env.IMAGE_NAME }}:latest
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME_DEV }}@${{ secrets.SSH_HOST_IP_DEV }} << 'EOF'
+
+            export DOCKER_PROVIDER_USERNAME=${{ secrets.DOCKER_PROVIDER_USERNAME }}
+            export IMAGE_NAME=${{ env.IMAGE_NAME }}
+            export APP_NAME=${{ env.APP_NAME }}
+            export DB_ROOT_PASSWORD=${{ secrets.DB_ROOT_PASSWORD }}
+            export DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+            export DB_DATABASE=${{ secrets.DB_DATABASE }}
+            export DB_USERNAME=${{ secrets.DB_USERNAME }}
+
+            # Set docker compose command
+            if command -v docker compose &> /dev/null; then
+              DOCKER_COMPOSE="docker compose"
+            elif command -v docker-compose &> /dev/null; then
+              DOCKER_COMPOSE="docker-compose"
+            else
+              echo "ERROR: Docker Compose is not installed!"
+              exit 1
+            fi
+
+            echo "📂 Changing to /backend directory..."
+            cd /backend
+
+            echo "🔧 Setting execute permission for *.sh..."
+            chmod +x /backend/db-entrypoint.sh /backend/db-backup.sh
+
+            echo "Using Docker Compose command: $DOCKER_COMPOSE"
+
+            echo "=== Starting Zero-Downtime Deployment ==="
+
+            echo "📥 Pulling latest backend image..."
+            docker pull ${BACKEND_IMAGE}
+
+            # Check if this is the first deployment
+            if ! $DOCKER_COMPOSE -f docker-compose.prod.yml ps | grep -q "${APP_NAME}_backend"; then
+              echo "First deployment detected - starting services normally..."
+              $DOCKER_COMPOSE -f docker-compose.prod.yml up -d
+
+              # Wait for services to be ready
+              echo "Waiting for services to start..."
+              sleep 30
+
+              # Wait for database readiness
+              echo "Waiting for MySQL database to be ready..."
+              MAX_RETRIES=30
+              RETRY_COUNT=0
+
+              while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+                if docker exec ${APP_NAME}_db mysqladmin ping -h localhost --silent; then
+                  echo "MySQL is ready!"
+                  break
+                fi
+                echo "MySQL is not ready yet. Retrying in 5 seconds (${RETRY_COUNT}/${MAX_RETRIES})..."
+                sleep 5
+                RETRY_COUNT=$((RETRY_COUNT + 1))
+              done
+
+              if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+                echo "ERROR: MySQL did not become ready in time."
+                exit 1
+              fi
+
+              echo "Generating application key..."
+              $DOCKER_COMPOSE -f docker-compose.prod.yml exec -T backend php artisan key:generate
+
+              echo "Running database migrations..."
+              $DOCKER_COMPOSE -f docker-compose.prod.yml exec -T backend php artisan migrate --force
+
+              echo "First deployment completed successfully!"
+              exit 0
+            fi
+
+            echo "Existing deployment detected - performing zero-downtime update..."
+
+            # Create a backup of current container
+            CURRENT_CONTAINER="${APP_NAME}_backend"
+            BACKUP_CONTAINER="${APP_NAME}_backend_backup"
+
+            echo "Creating backup of current container..."
+            docker rename $CURRENT_CONTAINER $BACKUP_CONTAINER 2>/dev/null || true
+
+            # Start new container with updated image
+            echo "Starting new container with latest image..."
+            $DOCKER_COMPOSE -f docker-compose.prod.yml up -d backend
+
+            # Wait for new container to be ready
+            echo "Waiting for new container to be ready..."
+            RETRY_COUNT=0
+            MAX_RETRIES=30
+
+            while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+              if docker exec ${APP_NAME}_backend php artisan --version >/dev/null 2>&1; then
+                echo "New container is responding to artisan commands"
+                break
+              fi
+              echo "Waiting for container to be ready... (attempt $((RETRY_COUNT + 1))/$MAX_RETRIES)"
+              sleep 2
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+            done
+
+            if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+              echo "ERROR: New container failed to start properly"
+              echo "Rolling back to previous container..."
+
+              # Stop the failed new container
+              docker stop ${APP_NAME}_backend 2>/dev/null || true
+              docker rm ${APP_NAME}_backend 2>/dev/null || true
+
+              # Restore backup container
+              docker rename $BACKUP_CONTAINER $CURRENT_CONTAINER
+              docker start $CURRENT_CONTAINER
+
+              echo "Rollback completed. Deployment failed."
+              exit 1
+            fi
+
+            echo "Generating application key..."
+            $DOCKER_COMPOSE -f docker-compose.prod.yml exec -T backend php artisan key:generate
+
+            echo "Running database migrations on new container..."
+            if ! $DOCKER_COMPOSE -f docker-compose.prod.yml exec -T backend php artisan migrate --force; then
+              echo "ERROR: Migration failed"
+              echo "Rolling back to previous container..."
+
+              # Stop the new container
+              docker stop ${APP_NAME}_backend
+              docker rm ${APP_NAME}_backend
+
+              # Restore backup container
+              docker rename $BACKUP_CONTAINER $CURRENT_CONTAINER
+              docker start $CURRENT_CONTAINER
+
+              echo "Rollback completed due to migration failure."
+              exit 1
+            fi
+
+            # Health check on new container
+            echo "Performing health check..."
+            HEALTH_CHECK_RETRIES=0
+            MAX_HEALTH_RETRIES=10
+
+            while [ $HEALTH_CHECK_RETRIES -lt $MAX_HEALTH_RETRIES ]; do
+              # Check if Laravel is responding (you can customize this check)
+              if docker exec ${APP_NAME}_backend php artisan route:list >/dev/null 2>&1; then
+                echo "Health check passed!"
+                break
+              fi
+              echo "Health check attempt $((HEALTH_CHECK_RETRIES + 1))/$MAX_HEALTH_RETRIES failed, retrying..."
+              sleep 3
+              HEALTH_CHECK_RETRIES=$((HEALTH_CHECK_RETRIES + 1))
+            done
+
+            if [ $HEALTH_CHECK_RETRIES -eq $MAX_HEALTH_RETRIES ]; then
+              echo "ERROR: Health check failed after $MAX_HEALTH_RETRIES attempts"
+              echo "Rolling back to previous container..."
+
+              # Stop the failed container
+              docker stop ${APP_NAME}_backend
+              docker rm ${APP_NAME}_backend
+
+              # Restore backup container
+              docker rename $BACKUP_CONTAINER $CURRENT_CONTAINER
+              docker start $CURRENT_CONTAINER
+
+              echo "Rollback completed due to health check failure."
+              exit 1
+            fi
+
+            # Clean up backup container if deployment successful
+            echo "Deployment successful! Cleaning up backup container..."
+            docker stop $BACKUP_CONTAINER 2>/dev/null || true
+            docker rm $BACKUP_CONTAINER 2>/dev/null || true
+
+            # Ensure all services are running
+            echo "Ensuring all services are running..."
+            $DOCKER_COMPOSE -f docker-compose.prod.yml up -d
+
+            # Clear Laravel caches for good measure
+            echo "Clearing Laravel caches..."
+            $DOCKER_COMPOSE -f docker-compose.prod.yml exec -T backend php artisan config:clear
+            $DOCKER_COMPOSE -f docker-compose.prod.yml exec -T backend php artisan route:clear
+            $DOCKER_COMPOSE -f docker-compose.prod.yml exec -T backend php artisan view:clear
+
+            # Clean up old images to save space
+            echo "Cleaning up old Docker images..."
+            docker image prune -af
+
+            echo "=== Zero-Downtime Deployment Completed Successfully ==="
+
+            # Display deployment info
+            echo "Deployment Summary:"
+            echo "- Image: $BACKEND_IMAGE"
+            echo "- Container: ${APP_NAME}_backend"
+            echo "- Status: $(docker inspect --format='{{.State.Status}}' ${APP_NAME}_backend)"
+          EOF

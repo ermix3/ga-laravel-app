@@ -1,17 +1,14 @@
-name: CD - Deploy Laravel App
+name: CD - Deploy Laravel App to server [Production]
 
 on:
   workflow_run:
-    workflows: ["CI - Laravel Build and Test"]
+    workflows: [ "CI - Laravel Build and Test" ]
     types: [ completed ]
-    branches: [ develop, main ]
+    branches: [ main ]
 
 env:
-  REGISTRY: docker.io
+  APP_NAME: LaravelApp
   IMAGE_NAME: laravel-backend
-  SHORT_SHA: ${{ github.sha }}
-  DB_DATABASE: laravel
-  DB_USERNAME: laravel
   NETWORK_NAME: fullstack-network
 
 jobs:
@@ -20,24 +17,30 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - name: 📥 Download deployment files from CI workflow
+        uses: dawidd6/action-download-artifact@v10
+        with:
+          workflow: ci.yml
+          workflow_conclusion: success
+          name: deploy-files
+          path: ./deployment
+          run_id: ${{ github.event.workflow_run.id }}
 
-      - name: Set up SSH key
+      - name: 🔐 Set up SSH Key
         uses: shimataro/ssh-key-action@v2
         with:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           known_hosts: ${{ secrets.SSH_KNOWN_HOSTS }}
 
-      - name: Check and install Docker on remote server
+      - name: 🛠️ Prepare Remote Server (Install Docker & Compose, Setup Directory & Network)
         run: |
-          ssh -o StrictHostKeyChecking=no root@${{ secrets.SERVER_IP }} << EOF
+          ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST_IP }} << EOF
 
             export NETWORK_NAME=${{ env.NETWORK_NAME }}
 
-            # Check if Docker is installed
+            echo "🔍 Checking Docker installation..."
             if ! command -v docker &> /dev/null; then
-              echo "Docker not found. Installing Docker..."
+              echo "📦 Installing Docker..."
               apt-get update
               apt-get install -y ca-certificates curl gnupg
               install -m 0755 -d /etc/apt/keyrings
@@ -46,67 +49,60 @@ jobs:
               echo "deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \$(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
               apt-get update
               apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-              echo "Docker installed successfully."
+              echo "✅ Docker installed."
             else
-              echo "Docker is already installed."
+              echo "✅ Docker already installed."
             fi
 
-            # Check if Docker Compose is installed
+            echo "🔍 Checking Docker Compose installation..."
             if ! command -v docker compose &> /dev/null && ! command -v docker-compose &> /dev/null; then
-              echo "Docker Compose not found. Installing Docker Compose..."
+              echo "📦 Installing Docker Compose..."
               apt-get update
               apt-get install -y docker-compose-plugin
 
-              # If the plugin fails, try the standalone version as fallback
               if ! command -v docker compose &> /dev/null; then
-                echo "Installing standalone Docker Compose as fallback..."
+                echo "📦 Installing standalone Docker Compose (fallback)..."
                 curl -SL https://github.com/docker/compose/releases/download/v2.23.3/docker-compose-linux-x86_64 -o /usr/local/bin/docker-compose
                 chmod +x /usr/local/bin/docker-compose
               fi
 
-              echo "Docker Compose installed successfully."
+              echo "✅ Docker Compose installed."
             else
-              echo "Docker Compose is already installed."
+              echo "✅ Docker Compose already installed."
             fi
 
-            echo "Create required directories with correct permissions"
+            echo "📁 Create required directories with correct permissions"
             mkdir -p /backend/backend_data/storage/{app,framework,logs} /backend/backend_data/bootstrap/cache
             chmod -R 775 /backend/backend_data/storage /backend/backend_data/bootstrap/cache
 
             echo "Set ownership (adjust UID/GID if your container uses different values)"
             chown -R 1000:1000 /backend/backend_data/storage /backend/backend_data/bootstrap/cache
 
-            # Ensuring Docker network exists...
+            echo "🌐 Ensuring Docker network exists..."
             if ! docker network inspect "$NETWORK_NAME" >/dev/null 2>&1; then
-              echo "Creating Docker network: $NETWORK_NAME"
+              echo "🌐 Creating Docker network: $NETWORK_NAME"
               docker network create "$NETWORK_NAME"
             else
-              echo "Network $NETWORK_NAME already exists."
+              echo "✅ Docker network $NETWORK_NAME already exists."
             fi
 
-            echo "Remove unused images to free disk space"
+            echo "🧼 Removing unused Docker images..."
             docker image prune -af
           EOF
 
-      - name: Copy docker compose and config to server
+      - name: 📤 Copy docker-compose and NGINX config to Remote Server
         run: |
-          # Copy the files
-          scp -o StrictHostKeyChecking=no docker-compose.prod.yml root@${{ secrets.SERVER_IP }}:/backend/docker-compose.prod.yml
-          scp -o StrictHostKeyChecking=no db-entrypoint.sh root@${{ secrets.SERVER_IP }}:/backend/db-entrypoint.sh
-          scp -o StrictHostKeyChecking=no db-backup.sh root@${{ secrets.SERVER_IP }}:/backend/db-backup.sh
-
-          # Set executable permissions on scripts
-          ssh -o StrictHostKeyChecking=no root@${{ secrets.SERVER_IP }} "chmod +x /backend/db-entrypoint.sh /backend/db-backup.sh"
+          scp -o StrictHostKeyChecking=no ./deployment/* ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST_IP }}:/backend
 
       - name: Create .env file on server
         run: |
-          ssh -o StrictHostKeyChecking=no root@${{ secrets.SERVER_IP }} << 'EOF'
+          ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST_IP }} << 'EOF'
             cat > /backend/.env << 'EOT'
-          APP_NAME=${{ secrets.APP_NAME }}
+          APP_NAME=${{ env.APP_NAME }}
           APP_KEY=
           APP_ENV=production
           APP_DEBUG=false
-          APP_URL=http://${{ secrets.SERVER_IP }}
+          APP_URL=http://${{ secrets.SSH_HOST_IP }}
 
           APP_LOCALE=en
           APP_FALLBACK_LOCALE=en
@@ -127,8 +123,8 @@ jobs:
           DB_CONNECTION=mysql
           DB_HOST=db
           DB_PORT=3306
-          DB_DATABASE=${{ env.DB_DATABASE }}
-          DB_USERNAME=${{ env.DB_USERNAME }}
+          DB_DATABASE=${{ secrets.DB_DATABASE }}
+          DB_USERNAME=${{ secrets.DB_USERNAME }}
           DB_PASSWORD=${{ secrets.DB_PASSWORD }}
 
           SESSION_DRIVER=database
@@ -173,18 +169,19 @@ jobs:
           EOT
           EOF
 
-      - name: Deploy Backend via SSH
+      - name: 🚀 Deploy Backend via SSH
+        env:
+          BACKEND_IMAGE: ${{ secrets.DOCKER_PROVIDER_NAME }}/${{ secrets.DOCKER_PROVIDER_USERNAME }}/${{ env.IMAGE_NAME }}:latest
         run: |
-          ssh -o StrictHostKeyChecking=no root@${{ secrets.SERVER_IP }} << 'EOF'
-            cd /backend
+          ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST_IP }} << 'EOF'
 
-            export DOCKER_HUB_USERNAME=${{ secrets.DOCKER_HUB_USERNAME }}
+            export DOCKER_PROVIDER_USERNAME=${{ secrets.DOCKER_PROVIDER_USERNAME }}
             export IMAGE_NAME=${{ env.IMAGE_NAME }}
-            export APP_NAME=${{ secrets.APP_NAME }}
-            export DB_PASSWORD=${{ secrets.DB_PASSWORD }}
-            export DB_DATABASE=${{ env.DB_DATABASE }}
-            export DB_USERNAME=${{ env.DB_USERNAME }}
+            export APP_NAME=${{ env.APP_NAME }}
             export DB_ROOT_PASSWORD=${{ secrets.DB_ROOT_PASSWORD }}
+            export DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+            export DB_DATABASE=${{ secrets.DB_DATABASE }}
+            export DB_USERNAME=${{ secrets.DB_USERNAME }}
 
             # Set docker compose command
             if command -v docker compose &> /dev/null; then
@@ -196,12 +193,18 @@ jobs:
               exit 1
             fi
 
+            echo "📂 Changing to /backend directory..."
+            cd /backend
+
+            echo "🔧 Setting execute permission for *.sh..."
+            chmod +x /backend/db-entrypoint.sh /backend/db-backup.sh
+
             echo "Using Docker Compose command: $DOCKER_COMPOSE"
 
             echo "=== Starting Zero-Downtime Deployment ==="
 
-            echo "Pull the latest image"
-            docker pull ${{ env.REGISTRY }}/${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
+            echo "📥 Pulling latest backend image..."
+            docker pull ${BACKEND_IMAGE}
 
             # Check if this is the first deployment
             if ! $DOCKER_COMPOSE -f docker-compose.prod.yml ps | grep -q "${APP_NAME}_backend"; then
@@ -361,8 +364,7 @@ jobs:
 
             # Display deployment info
             echo "Deployment Summary:"
-            echo "- Image: ${{ env.REGISTRY }}/${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest"
-            echo "- SHA: $SHORT_SHA"
+            echo "- Image: $BACKEND_IMAGE"
             echo "- Container: ${APP_NAME}_backend"
             echo "- Status: $(docker inspect --format='{{.State.Status}}' ${APP_NAME}_backend)"
           EOF
