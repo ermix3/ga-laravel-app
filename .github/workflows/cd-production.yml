@@ -234,18 +234,21 @@ jobs:
             $DOCKER_COMPOSE -f docker-compose.prod.yml exec -T backend php artisan key:generate
 
             echo "Running database migrations..."
-            $DOCKER_COMPOSE -f docker-compose.prod.yml exec -T backend php artisan migrate --force
+            $DOCKER_COMPOSE -f docker-compose.prod.yml exec -T backend bash -c "
+              set -e
+              echo 'Generating application key...'
+              php artisan key:generate
 
-            # Clear Laravel caches for good measure
-            echo "Clearing Laravel caches..."
-            $DOCKER_COMPOSE -f docker-compose.prod.yml exec -T backend php artisan config:clear
-            $DOCKER_COMPOSE -f docker-compose.prod.yml exec -T backend php artisan route:clear
-            $DOCKER_COMPOSE -f docker-compose.prod.yml exec -T backend php artisan view:clear
+              echo 'Running database migrations...'
+              php artisan migrate --force
 
-            echo "Deployment completed successfully!"
+              echo 'Clearing Laravel caches...'
+              php artisan config:clear
+              php artisan route:clear
+              php artisan view:clear
 
-            echo "Deployment Summary:"
-            echo "- Image: $BACKEND_IMAGE"
-            echo "- Container: ${APP_NAME}_backend"
-            echo "- Status: $(docker inspect --format='{{.State.Status}}' ${APP_NAME}_backend)"
+              echo 'Laravel setup completed successfully!'
+            "
+
+            echo "✅ Deployment completed successfully!"
           EOF
