@@ -1,34 +1,55 @@
+x-common: &common
+  restart: unless-stopped
+  networks:
+    - fullstack-network
+  logging: &default-logging
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+  deploy: &default-resources
+    resources:
+      limits:
+        cpus: '0.5'
+        memory: 512M
+      reservations:
+        cpus: '0.25'
+        memory: 256M
+
 services:
   backend:
-    image: ${DOCKER_PROVIDER_USERNAME}/${IMAGE_NAME}:${IMAGE_TAG}
+    <<: *common
+    image: ${BACKEND_IMAGE}
     container_name: ${APP_NAME}_backend
-    restart: unless-stopped
     depends_on:
-      - db
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/up"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+      db:
+        condition: service_healthy
     volumes:
       - ./.env:/var/www/html/.env
       - ./backend_data/storage:/var/www/html/storage
-    networks:
-      - fullstack-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    logging:
+      <<: *default-logging
+      options:
+        tag: "${APP_NAME}-backend"
 
   db:
+    <<: *common
     image: mysql:8.0
     container_name: ${APP_NAME}_db
-    restart: unless-stopped
     environment:
-      - MYSQL_DATABASE=${DB_DATABASE}
-      - MYSQL_USER=${DB_USERNAME}
-      - MYSQL_PASSWORD=${DB_PASSWORD}
-      - MYSQL_ROOT_PASSWORD=${DB_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${DB_DATABASE}
+      MYSQL_USER: ${DB_USERNAME}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
       # Backup configuration
-      - BACKUP_RETENTION_DAYS=7
-      - BACKUP_SCHEDULE=0 0 * * *
+      BACKUP_RETENTION_DAYS: 7
+      BACKUP_SCHEDULE: "0 0 * * *"
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 10s
@@ -44,21 +65,22 @@ services:
       # Mount custom entrypoint that sets up cron
       - ./db-entrypoint.sh:/custom-entrypoint.sh
     command: ["bash", "/custom-entrypoint.sh"]
-    networks:
-      - fullstack-network
 
   phpmyadmin:
+    <<: *common
     image: phpmyadmin:latest
     container_name: ${APP_NAME}_phpmyadmin
-    restart: unless-stopped
     environment:
-      - PMA_HOST=db
-      - PMA_PORT=3306
-      - MYSQL_ROOT_PASSWORD=${DB_ROOT_PASSWORD}
+      PMA_HOST: db
+      PMA_PORT: 3306
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
     depends_on:
-      - db
-    networks:
-      - fullstack-network
+      db:
+        condition: service_healthy
+    logging:
+      <<: *default-logging
+      options:
+        tag: "${APP_NAME}-phpmyadmin"
 
 networks:
   fullstack-network:
